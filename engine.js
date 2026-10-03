@@ -8,6 +8,7 @@
 /* ─────────── Paramètres ─────────── */
 const STORE_KEY = 'terravelo_sgn_v1';
 const SALT = 'TV-SGN-1STMG-HPME';
+const SAVE_URL = 'https://www.horizonpme.fr/save-terravelo.php';
 const MULT = [1, 0.6, 0.3];      // points selon la tentative réussie (1re, 2e, 3e)
 const FAIL_RATIO = 0.25;         // part des points gardée, au prorata, après 3 échecs
 const MASTER = 0.75, CONSOL = 0.5, NOTION_OK = 0.7;
@@ -653,6 +654,7 @@ function viewResults() {
     <div class="card"><div class="card-title">Code de résultat</div>
       <div class="code-box"><div><div class="code-lab">À montrer à votre professeur</div><div class="code-val">${code}</div></div>
       <div style="font-size:13px;color:rgba(255,255,255,.6);max-width:280px">Ce code est lié à votre nom, votre classe et votre note. Il ne peut pas être recopié par un autre élève.</div></div>
+      <div class="send-status no-print" id="send-status"></div>
     </div>
 
     <div class="btn-row no-print">
@@ -662,6 +664,36 @@ function viewResults() {
     </div>
     <p class="print-only" style="margin-top:14px;font-size:11px;color:#666">Horizon PME · Mission Terra Vélo · Fiche générée le ${new Date().toLocaleDateString('fr-FR')}</p>
   </div>`;
+  sendResults({ ch, acts, note, code, mins, toReview, uniq });
+}
+
+/* ─────────── Envoi des résultats au tableau de bord formateur (OVH) ─────────── */
+function sendStatus(kind, msg) {
+  const el = $('#send-status'); if (!el) return;
+  el.className = 'send-status no-print ' + kind;
+  el.innerHTML = msg;
+}
+function sendResults(r) {
+  if (window.TV_NO_PRINT) { sendStatus('wait', 'Aperçu : l’envoi au professeur se fait depuis la version GitHub Pages.'); return; }
+  if (S.sent) { sendStatus('ok', 'Résultats transmis à votre professeur.'); return; }
+  sendStatus('wait', 'Envoi des résultats à votre professeur…');
+  const chapitres = {};
+  [1, 2, 3].forEach(c => { const pct = r.ch[c].max ? r.ch[c].got / r.ch[c].max : 0; chapitres[c] = { pct: Math.round(pct * 100), statut: status(pct)[0] }; });
+  const missions = MISSIONS.map(m => r1(m.acts.reduce((s, a) => s + a.parts.reduce((t, p, i) => t + ps(a.id + ':' + i).score, 0), 0)));
+  const payload = {
+    nom: S.id.nom, prenom: S.id.prenom, classe: S.id.classe,
+    note: r.note, total: r1(total()), chapitres, missions,
+    notions_a_revoir: r.uniq(r.toReview.flatMap(x => x.a.notions.map(n => ({ n })))).map(x => x.n),
+    code: r.code, duree: r.mins || 0
+  };
+  fetch(SAVE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+    .then(res => res.json())
+    .then(d => {
+      if (!d.success) throw new Error(d.error || '');
+      S.sent = Date.now(); save();
+      sendStatus('ok', 'Résultats transmis à votre professeur.');
+    })
+    .catch(() => sendStatus('ko', 'Les résultats n’ont pas pu être transmis (connexion). <button type="button" class="btn btn-secondary" data-act="resend">Réessayer</button> Votre code reste valable : montrez-le à votre professeur.'));
 }
 
 /* ─────────── Espace enseignant : vérification d’un code ─────────── */
@@ -736,6 +768,7 @@ document.addEventListener('click', e => {
   if (act === 'dossier') openDossier();
   else if (act === 'print') window.print();
   else if (act === 'verify') verifyCode();
+  else if (act === 'resend') viewResults();
   else if (act === 'reset') {
     if (t.dataset.armed) { store.clear(); S = fresh(); go('#/'); }
     else { t.dataset.armed = '1'; t.textContent = 'Confirmer : tout effacer'; t.classList.add('btn-dark'); setTimeout(() => { if (t.isConnected) { delete t.dataset.armed; t.textContent = 'Recommencer à zéro'; t.classList.remove('btn-dark'); } }, 5000); }
